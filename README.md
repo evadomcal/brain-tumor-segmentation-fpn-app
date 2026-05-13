@@ -1,0 +1,4 @@
+```
+uv run python
+
+```
