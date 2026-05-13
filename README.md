@@ -11,14 +11,12 @@
 ## Tabla de Contenidos
 - [Descripción General](#descripción-general)
 - [Características](#características)
-- [Estructura del Proyecto](#arquitectura-del-proyecto)
 - [Requisitos Previos](#requisitos-previos)
 - [Instalación](#instalación)
 - [Configuración de Kaggle](#configuración-de-kaggle)
 - [Estructura del Proyecto](#estructura-del-proyecto)
 - [Uso de la Aplicación](#uso-de-la-aplicación)
 - [Entrenamiento del Modelo](#entrenamiento-del-modelo)
-- [Tecnologías Utilizadas](#tecnologías-utilizadas)
 - [Autor](#autor)
 - [Licencia](#licencia)
 
