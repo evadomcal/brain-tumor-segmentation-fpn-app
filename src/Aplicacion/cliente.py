@@ -47,7 +47,7 @@ sys.path.insert(0, str(src_path))
 # IMPORTACIÓN DE MÓDULOS PROPIOS DEL PROYECTO
 from transformar_datos import procesar_imagen_completo  # Preprocesamiento: recorte y normalización de resonancias
 from procesamiento_datos.modelo.segmentar import segmentar_imagen  # Inferencia: aplicar FPN para obtener máscara
-from TRABAJO.src.procesamiento_datos.modelo.modelo_fpn import FPN   # Arquitectura del modelo FPN
+from src.procesamiento_datos.modelo.modelo_fpn import FPN   # Arquitectura del modelo FPN
 
 
 # CLASE PRINCIPAL: DAGSTER CLIENT
