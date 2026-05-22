@@ -1,4 +1,4 @@
-# IMPORTACIÓN, LIMPIEZA Y TRANSFORMACIÓN DE DATOS
+# MAPEO_ARCHIVOS
 
 # En esta primera parte, vamos a importar y transformar nuestros datos de modo que al final
 # obtengamos un diccionario o catálogo con el que podamos empezar a analizar y construir
@@ -15,7 +15,7 @@ warnings.filterwarnings('ignore') # Ignorar esos avisos
 
 # 1. CONFIGURACIÓN DE RUTAS
 # 'r' antes de la comilla significa "texto en bruto" para que las barras invertidas \ no den error
-ruta_base = r"Trabajo\DATOS" 
+ruta_base = r"DATOS" 
 
 # Ruta de los datos exportados de kaggle: "data.csv"
 ruta_csv = os.path.join(ruta_base, "data.csv")
@@ -23,10 +23,6 @@ ruta_csv = os.path.join(ruta_base, "data.csv")
 # 2. CARGA INICIAL DE DATOS CLÍNICOS
 # Leemos "data.csv" y lo convertimos en una tabla llamada 'df_clinico'
 df_clinico = pd.read_csv(ruta_csv) 
-
-# Mostramos cuántos pacientes tenemos (110) y las variables disponibles.
-print(f"   Pacientes en data.csv: {len(df_clinico)}") 
-print(f"   Columnas disponibles: {df_clinico.columns.tolist()}") 
 
 # 3. FUNCIÓN PARA DETECTAR lOS CANALES DISPONIBLES
 def detectar_secuencias_disponibles(ruta_imagen, umbral_similitud=0.95):
@@ -102,10 +98,10 @@ def crear_indice_archivos(ruta_base, df_clinico, detectar=True):
     registros = [] # Aquí guardaremos la información de cada foto que encontremos
     pacientes_procesados = 0
     estadisticas = {'pre_faltan': 0, 'post_faltan': 0, 'ambos_faltan': 0}
-    
+    ruta_base = os.path.abspath(ruta_base)
     # Empezamos a entrar en cada carpeta, correspondiente a cada paciente, de la ruta base ("DATOS")
     for carpeta in os.listdir(ruta_base): 
-        ruta_carpeta = os.path.join(ruta_base, carpeta) 
+        ruta_carpeta = os.path.join(ruta_base,carpeta)
         
         # Nuestras carpetas empiezan por TCGA_
         # Si no es una carpeta: .isdir comprueba si es un directorio o carpeta
@@ -183,9 +179,12 @@ def crear_indice_archivos(ruta_base, df_clinico, detectar=True):
             # Registramos la información obtenida
             registros.append({
                 'id_paciente': id_paciente,
+				'carpeta_original': carpeta,
+				'fecha_muestra': fecha,
                 'num_corte': num_corte,
                 'ruta_imagen': ruta_img,
                 'ruta_mascara': ruta_mask,
+				'institucion': id_paciente.split('_')[1],
                 'tiene_pre': tiene_pre,
                 'tiene_post': tiene_post,
                 'mascara_tiene_tumor': tiene_tumor, 
@@ -223,4 +222,4 @@ print(f" Cortes SIN tumor detectados: {len(df_catalogo)-cortes_con_tumor}")
 # Guardamos todo un archivo final con el que trabajaremos a partir de ahora.
 ruta_catalogo = os.path.join(ruta_base, "catalogo_maestro_final.csv")
 df_catalogo.to_csv(ruta_catalogo, index=False)
-print(f"   ¡Catálogo guardado con éxito!")
+print(f"   Guardado en: {ruta_catalogo}")

@@ -1,243 +1,333 @@
-import torch                         # El motor principal. Maneja tensores (matrices 3D, como nuestras imagenes).
-import torch.optim as optim          # Sirve para optimizar los pesos de la red neuronal
-from torch.utils.data import DataLoader, Dataset # Dataset es la libreria de fotos y DataLoader el camión que las lleva.
-import numpy as np                   # El lenguaje de las imágenes. Tus archivos .npy son básicamente matrices de Numpy.
-import pandas as pd                  # El gestor de archivos. Lee tu CSV con la lista de pacientes y rutas.
-from pathlib import Path             # El guía de caminos. Gestiona las carpetas (images_dir) de forma inteligente.
-from .modelo_unet import UNet         # Tu creación. Trae el diseño de la red en "U" que definimos en el otro archivo.
+# Este script implementa el entrenamiento de una red FPN para segmentación de imágenes médicas.
+# La pirámide de características permite detectar objetos a diferentes escalas,
+# combinando contexto global (escala 1/32) con detalles finos (escala 1/4).
+
+# LIBRERÍAS NECESARIAS
+import torch  # Deep learning: tensores, GPU...
+import torch.optim as optim  # Optimizadores: Adam, SGD, Adamax para actualizar pesos
+from torch.utils.data import DataLoader, Dataset  # Carga eficiente de datos en batches y clase base para datasets
+import numpy as np  # Computación numérica: arrays, carga .npy, métricas
+import pandas as pd  # Manipulación de dataframes: lectura de CSV
+from pathlib import Path  # Manejo de rutas de archivos
+from .modelo_fpn import FPN  # Modelo de segmentación
 
 
-# =========================================================================
-# PARTE 1: EL BIBLIOTECARIO (Clase MRIDataset)
-# =========================================================================
-# Esta clase enseña a PyTorch a leer tus archivos .npy de resonancias.
-
-# Creamos una clase, una "plantilla" de como leer nuestros datos, basándonos 
-# en la ya creada en pyTorch, Dataset.
+# CLASE MRIDATASET - MANEJO DEL DATASET
 class MRIDataset(Dataset):
-    # init es el constructor inicial, asi se comienza siempre a crear una clase
-    def __init__(self, csv_path, images_dir):
-        # 1. Leemos el "inventario" (CSV). 
-        # Ejemplo: row 1 -> ID: TCGA_DU_6404, Ruta: 'vol_01.npy'
-        self.data = pd.read_csv(csv_path)
-        # Cuando entrenemos aqui metemos test.csv, train.csv y val.csv
-        # 2. Guardamos la dirección de la carpeta de imágenes (Path nos da la ruta)
-        self.images_dir = Path(images_dir)
-
-    # Numero total de imagenes que tenemos que procesar
-    def __len__(self):
-        return len(self.data)
+    """
+    Dataset personalizado para cargar imágenes y máscaras de segmentación.
+    """
     
-    # Definimos la siguiente funcion para extraer la informacion, que sera la del indice idx
+    def __init__(self, csv_path, images_dir):
+        """
+        Inicializa el dataset.
+        
+        Args:
+            csv_path: Ruta al archivo CSV con columnas 'ruta_procesada' y 'ruta_mascara'
+            images_dir: Carpeta donde están almacenadas las imágenes .npy
+            logger: Objeto para logging opcional
+        """
+        self.data = pd.read_csv(csv_path)           # Lee CSV y convierte a DataFrame de pandas
+        self.images_dir = Path(images_dir)          # Guarda ruta como objeto Path
+        self._diagnostic_done = False               # Bandera para diagnóstico único
+
+    def __len__(self):
+        """
+        Devuelve el número total de muestras en el dataset.r.
+        """
+        return len(self.data)
+
     def __getitem__(self, idx):
+        """
+        Carga y preprocesa una muestra específica del dataset.
         
-        # 1. Localizar la fila idx en el CSV (ej: paciente 105)
-        row = self.data.iloc[idx]
+        Args:
+            idx: Índice de la muestra a cargar
+            
+        Returns:
+            img: Tensor de imagen (Canales, Alto, Ancho)
+            mask: Tensor de máscara (1, Alto, Ancho)
+        """
+        row = self.data.iloc[idx]                               # Obtiene fila por índice
+        ruta_procesada = Path(row['ruta_procesada']).name       # Extrae nombre del archivo de imagen
+        ruta_mascara = Path(row['ruta_mascara']).name           # Extrae nombre del archivo de máscara
         
-        ruta_procesada= Path(row['ruta_imagen']).name
-        ruta_mascara= Path(row['ruta_mascara']).name
-
-        # 2. Cargar la imagen : Tiene 3 canales (FLAIR,Pre,Post).
-        # El formato original es una matriz de dimensiones : (Alto, Ancho, 3).
-        # La barra / indica: entra dentro de 
-        img = np.load(self.images_dir / ruta_procesada) # uso np.load pq mis imagenes son formato numpy
+        # Carga las matrices .npy con NumPy
+        img = np.load(self.images_dir / ruta_procesada)         # (Alto, Ancho, 3) - imagen RGB
+        mask = np.load(self.images_dir / ruta_mascara)          # (Alto, Ancho) - máscara binaria
         
-
-        # 3. Cargar la máscara : 
-        # El formato es (Alto, Ancho), con 1 donde hay tumor y 0 donde no.
-        mask = np.load(self.images_dir / ruta_mascara) 
         
-        # --- TRANSFORMACIÓN PARA PYTORCH ---
+        # Convierte la máscara a valores 0/1 si es necesario
+        # (algunas máscaras pueden tener valores >1 como 255)
+        if mask.max() > 1:
+            mask = (mask > 0).astype(np.float32) # devuelve 0-1
         
-        # img.permute(2, 0, 1): 
-        # Pasa de (256, 256, 3) a (3, 256, 256). 
-        # PyTorch quiere los "cables" (canales) al principio.
+        # Convertir a tensores de PyTorch con formato correcto
+        # img: (Alto, Ancho, Canales) → (Canales, Alto, Ancho) con permute
         img = torch.tensor(img, dtype=torch.float32).permute(2, 0, 1)
         
-        # mask.unsqueeze(0): 
-        # Pasa de (256, 256) a (1, 256, 256). 
-        # Le añade una dimensión para que parezca una "imagen" de un solo canal.
+        # mask: (Alto, Ancho) → (1, Alto, Ancho) con unsqueeze (añade dimensión canal=1)
         mask = torch.tensor(mask, dtype=torch.float32).unsqueeze(0)
         
-        return img, mask  # nos devuelve tanto imagen como mascara en formato tensor para darselo al modelo
+        return img, mask
 
 
-# =========================================================================
-# PARTE 2: EL ENTRENADOR (Función entrenar_unet)
-# =========================================================================
+# ============================================================================
+# FUNCIÓN DE ENTRENAMIENTO - UNET (VERSIÓN COMENTADA)
+# ============================================================================
 
-def entrenar_unet(train_csv, val_csv, images_dir, pesos_clase_path, epochs=1, lr=1e-4, batch_size=8):
+def entrenar_fpn(train_csv, val_csv, images_dir, pesos_clase_path, 
+                  epochs=1, lr=5e-5, batch_size=8):
+    """
+    Entrena el modelo FPN con criterio de parada basado en F1-Score.
     
-    # 1. CREAR EL SISTEMA DE LOGÍSTICA
-    train_dataset = MRIDataset(train_csv, images_dir)  # formato tensor
-    val_dataset = MRIDataset(val_csv, images_dir)  # formato tensor
+    Args:
+        train_csv: Ruta al CSV con datos de entrenamiento
+        val_csv: Ruta al CSV con datos de validación
+        images_dir: Carpeta con imágenes .npy
+        pesos_clase_path: Ruta al archivo con pesos de clase (para desbalanceo)
+        epochs: Número máximo de épocas de entrenamiento
+        lr: Learning rate (tasa de aprendizaje)
+        batch_size: Tamaño del lote
     
-    # DataLoader: Es el camión que lleva las fotos a la red.
-    # hace una lista de listas para ir procesando de grupito en grupito y no saturar
-
-    # batch_size=8: La IA estudia de 8 en 8 pacientes para no saturar la memoria.
-    # shuffle=True: Mezcla las cartas en cada vuelta para que no se aprenda el orden.
+    Returns:
+        model: Modelo entrenado (con los mejores pesos encontrados)
+    """
+    
+    # 1. CREAR DATASETS Y DATALOADERS
+    train_dataset = MRIDataset(train_csv, images_dir)
+    val_dataset = MRIDataset(val_csv, images_dir)
+    
+    # DataLoader: Distribuye los datos en lotes, shuffle=True mezcla para entrenamiento
+    # Devuelve tensores de la forma: (n_lotes,canales, alto, ancho)
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
     
-    # 2. PREPARAR EL CEREBRO (La Red). Model es la red neuronal.
-    model = UNet(entrada=3, salida=1)
-
-    # device: Si hay una tarjeta NVIDIA (cuda), úsala (porque va mas rapido el procesamiento).
-    # No todos los ordenadores la tienen,asi que si no que use el procesador (cpu).
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model.to(device) # Movemos el modelo a la tarjeta gráfica
+    # 2. INICIALIZAR MODELO
+    model = FPN()                               # Instancia del modelo FPN
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')  # GPU si está disponible
+    model.to(device)                            # Mueve el modelo a GPU/CPU
     
-    # 3. BALANCEO DE CLASES (pesos)
-    # Tus imágenes tienen muchísimos píxeles sanos y pocos de tumor, asociamos pesos
-    # pos_weight .
-    pesos_clase = np.load(pesos_clase_path) # [peso_sano, peso_tumor]
-
-    # Esta es la penalizacion de la IA, le dice que penaliza mas fuerte los falsos negativos, es decir,
-    # si dice que no hay tumor cuando si que lo hay, la penalizacion es enorme
-    #pos_weight = torch.tensor([pesos_clase[1]], dtype=torch.float32).to(device)
-    pos_weight=torch.tensor([180.0],dtype=torch.float32).to(device)
-
-
-    # 4. LAS REGLAS DEL JUEGO
-    # criterion: Mide el error entre el dibujo de la IA y el real.
-    # BCE: se usa pq nuestro problema es binario, se refiere a Entropia binaria
-    # WithLogitsLoss evitar errores de precision
-    criterion = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-
-    # optimizer: El algoritmo (Adam) que ajusta los pesos de las neuronas de la red neuronal.
-    # Una red neuronal es como un arbol de decision y en cada division se le da un peso a cada dato de entrada,
-    # Cada division es como una nueva neurona.
-    # lr es la velocidad de aprendizaje, mientras mas lento mejor. Es decir el cambio entre el peso de
-    # una neurona y la siguiente tiene un tope, para que no se vuelva loca.
-    # model.parameters() le estamos dando permiso para tocar lo que sea 
-    optimizer = optim.Adam(model.parameters(), lr=lr)
+    # 3. CARGAR PESOS DE CLASE (para pérdida balanceada)
+    pesos_clase = np.load(pesos_clase_path)     # Carga array con pesos [peso_fondo, peso_objeto]
+    pos_weight = torch.tensor([pesos_clase[1]], dtype=torch.float32).to(device) # peso para tumor
     
-    best_val_loss = float('inf') # Para guardar solo la "mejor versión" del modelo
-    # sirve para ir bajando el error, si el error del modelo en la primera vuelta es menor que infinito, me quedo con el
-    # y en la segunda ya comparo que sea menor que el de la etapa previa
+    # 4. DEFINIR FUNCIONES DE PÉRDIDA 
     
- # Iniciamos el gran bucle. Cada 'epoch' es una vuelta completa a tus 3929 imágenes. Damos 50.
+    def dice_loss(inputs, target):
+        """
+        Dice Loss: Mide solapamiento entre predicción y máscara real.
+        Fórmula: 1 - (2 * intersección + 1) / (unión + 1)
+        El +1 suaviza para evitar división por cero.
+        """
+        inputs = torch.sigmoid(inputs)          # Convierte logits a probabilidades
+        intersection = (target * inputs).sum()  # Área de intersección (verdaderos positivos)
+        union = target.sum() + inputs.sum()     # Área total predicha + real
+        return 1 - (2 * intersection + 1.0) / (union + 1.0) # fórmula
+    
+    def bce_dice_loss(inputs, target):
+        """
+        Pérdida combinada: Binary Cross Entropy + Dice Loss.
+        BCE evalúa píxel a píxel, Dice evalúa solapamiento global.
+        La combinación suele dar mejores resultados que cada una por separado.
+        """
+        bce = torch.nn.BCEWithLogitsLoss()(inputs, target)  # Pérdida binaria con logits
+        dice = dice_loss(inputs, target)                    # Pérdida Dice
+        return bce + dice                                   # Suma de ambas
+    
+    criterion = bce_dice_loss                   # Función de pérdida a usar
+
+
+    #  5. OPTIMIZADOR 
+    # Adamax: Variante de Adam que usa norma infinito, mejor para casa binario
+    optimizer = optim.Adamax(model.parameters(), lr=lr)
+    
+    # 6. CONFIGURACIÓN DE EARLY STOPPING 
+    best_f1 = 0.0           # Mejor F1-Score alcanzado
+    patience_counter = 0    # Contador de épocas sin mejora
+    patience = 7            # Épocas a esperar antes de parar. Si en 7 épocas no mejora el f1, no espero más.
+    best_model_state = None # Almacena los mejores pesos
+    
+    # 7. BUCLE DE ENTRENAMIENTO POR ÉPOCAS
     for epoch in range(epochs):
         
-        # A. FASE DE ESTUDIO (Train)
-        # Le decimos a la red: "¡Atención! Ahora vas a aprender, activa tus mecanismos de ajuste".
-        model.train() 
-        
-        # Aquí iremos sumando los errores de cada grupo de fotos para saber el error final.
+        # FASE DE ENTRENAMIENTO
+        model.train()                               # Modo entrenamiento (activa dropout, batch norm)
         train_loss = 0
         
-        # El DataLoader nos va dando paquetes (batches) de 8 imágenes y 8 máscaras a la vez.
         for imgs, masks in train_loader:
+            imgs = imgs.to(device)                  # Mueve imágenes a GPU/CPU
+            masks = masks.to(device)                # Mueve máscaras a GPU/CPU
             
-            # Mandamos las imágenes (3 canales) y las máscaras al "cerebro" de la 
-            # tarjeta gráfica (GPU). Si no hacemos esto, el código dará error.
-            imgs, masks = imgs.to(device), masks.to(device)
+            optimizer.zero_grad()                   # Reinicia gradientes de la época anterior
+            outputs = model(imgs)                   # Forward pass: imagen → predicción
+            loss = criterion(outputs, masks)        # Calcula pérdida entre predicción y máscara real
+            loss.backward()                         # Backward pass: calcula gradientes
+            optimizer.step()                        # Actualiza pesos del modelo
             
-            # 1. zero_grad
-            # Borramos los errores del grupo anterior. Si no lo hacemos, los errores se 
-            # acumularían y la red se volvería loca. Empezamos de cero para este grupo.
-            optimizer.zero_grad()
+            train_loss += loss.item()               # Acumula pérdida
             
-            # 2. La red neuronal hace su función (camino)
-            # Metemos las 8 resonancias en la U-Net. La red hace todo el camino (bajada y subida) 
-            # y nos devuelve 8 mapas de probabilidad.
-            outputs = model(imgs)
-            
-            # 3. La penalizacion (loss)
-            # Comparamos los resultados de la red (outputs) con las máscaras que tenemos (masks),
-            # usando el criterio de la entropia visto arriba en 'criterion'
-            # Gracias al pos_weight (pesos), si la red da un falso negativo, el número 
-            # de 'loss' (error) será muy alto.
-            loss = criterion(outputs, masks) # error cometido
-            
-            # 4. BUSCAR CULPABLES (backward)
-            # La red viaja hacia atrás (de la salida a la entrada). Calcula cuánto ha 
-            # contribuido cada neurona al error cometido. Es como buscar qué "detective" 
-            # o qué "pintor" se ha equivocado.
-            # Es FUNDAMENTAL para el deep learning, ya que nos dice que pesos de las neuronas hay que aumentar
-            # o disminuir segun cuanto han contribuido al error.
-            loss.backward()
-            
-            # 5. AJUSTAR LOS PESOS
-            # El optimizador Adam ajusta los pesos de las neuronas culpables.
-            # Si una neurona falló, le cambia un poco el valor para que la próxima 
-            # vez no cometa el mismo error.
-            optimizer.step()
-            
-            # Acumulamos (+= es sumale a lo anterior) el error de este grupo.
-            train_loss += loss.item()
-
-
-        # B. FASE DE VALIDACION
-        model.eval() # Encendemos el modo "evaluación" (no aprende, solo demuestra)
+        avg_train_loss = train_loss / len(train_loader)  # Pérdida promedio de la época
+        
+        #  FASE DE VALIDACIÓN 
+        model.eval()                      # Modo evaluación (desactiva dropout)
         val_loss = 0
-        with torch.no_grad(): # Bloqueamos el aprendizaje para ir más rápido
+        
+        # Almacenar todas las predicciones y valores reales para calcular métricas
+        todas_predicciones = []
+        todas_reales = []
+        
+        with torch.no_grad():                 # Desactiva cálculo de gradientes (ahorra memoria)
             for imgs, masks in val_loader:
-                imgs, masks = imgs.to(device), masks.to(device) # donde trabaja el ordenador
+                imgs = imgs.to(device)
+                masks = masks.to(device)
                 outputs = model(imgs)
-                val_loss += criterion(outputs, masks).item() #Vemos como se equivoca en datos con los que no ha sido entrenado
+                val_loss += criterion(outputs, masks).item()
+                
+                # Convierte logits a probabilidades con sigmoide
+                probs = torch.sigmoid(outputs)
+                
+                # Aplana tensores para tener arrays 1D de píxeles: (128,128,1)
+                preds_flat = probs.cpu().numpy().flatten()
+                masks_flat = masks.cpu().numpy().flatten()
+                
+                todas_predicciones.extend(preds_flat)  # extend añade todos los elementos, no las listas
+                todas_reales.extend(masks_flat)
         
+        avg_val_loss = val_loss / len(val_loader)
         
-        # 5. GUARDAR EL MEJOR MODELO
-        # Si el error actual es el más bajo que hemos visto, guardamos el mejor modelo obtenido.
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            torch.save(model.state_dict(), "modelo_unet_mejor.pth")
-
-            # Me dice que los pesos de la red neuronal los guarde en  "modelo_unet_mejor.pth"
+        # CÁLCULO DE MÉTRICAS 
+        y_true = np.array(todas_reales)            # Valores reales (0 o 1)
+        y_prob = np.array(todas_predicciones)      # Probabilidades predichas
+        
+        # Prueba diferentes umbrales para encontrar el mejor F1-Score
+        umbrales = np.arange(0.3, 0.8, 0.05)       # Umbrales de 0.3 a 0.75
+        mejor_f1_epoch = 0
+        mejor_umbral_epoch = 0.5
+        mejor_sens_epoch = 0
+        mejor_prec_epoch = 0
+        
+        for umbral in umbrales:
+            # Clasifica según umbral: > umbral = 1 (objeto), ≤ umbral = 0 (fondo)
+            y_pred = (y_prob > umbral).astype(int)
+            y_true_bin = y_true.astype(int)
+            
+            # Calcular matriz de confusión
+            tp = np.logical_and(y_pred == 1, y_true_bin == 1).sum()  # Verdaderos positivos
+            fp = np.logical_and(y_pred == 1, y_true_bin == 0).sum()  # Falsos positivos
+            fn = np.logical_and(y_pred == 0, y_true_bin == 1).sum()  # Falsos negativos
+            
+            # Métricas
+            sensibilidad = tp / (tp + fn + 1e-8)    # Recall = TP/(TP+FN) - qué % de objetos detectó
+            precision = tp / (tp + fp + 1e-8)       # Precisión = TP/(TP+FP) - qué % de detecciones son correctas
+            f1 = 2 * (precision * sensibilidad) / (precision + sensibilidad + 1e-8)  # Media armónica
+            
+            if f1 > mejor_f1_epoch:
+                mejor_f1_epoch = f1
+                mejor_umbral_epoch = umbral
+                mejor_sens_epoch = sensibilidad
+                mejor_prec_epoch = precision
+        
+        # 8. EARLY STOPPING
+        # Si mejoró el F1, guarda los pesos y resetea contador
+        if mejor_f1_epoch > best_f1:
+            best_f1 = mejor_f1_epoch
+            patience_counter = 0
+            best_model_state = model.state_dict().copy()  # Copia los mejores pesos
+        else:
+            patience_counter += 1  # No mejoró, incrementa contador
+            
+            # Si superó la paciencia, detiene entrenamiento (por defecto, 7 épocas de paciencia)
+            if patience_counter >= patience:
+                model.load_state_dict(best_model_state)    # Carga los mejores pesos
+                break  # Sale del bucle de entrenamiento
     
-    return model
+    return model  # Devuelve el modelo entrenado
 
+# FUNCIÓN PARA ENCONTRAR MEJOR UMBRAL
 
-# Por defecto el umbral es 0.5 y en función de los datos de validacion vamos a optimizarlo.
-def encontrar_mejor_umbral(model, val_csv, images_dir,device='cpu',batch_size=8):
+def encontrar_mejor_umbral(model, val_csv, images_dir, device='cpu', batch_size=8, logger=None):
     """
-    Encuentra el mejor umbral usando datos de validación
-    """
-    val_dataset = MRIDataset(val_csv, images_dir) # convierte a tensor las imagenes
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False) #Aquí el orden no afecta así que lo ponemos en False
-    model.eval() # lista de listas de dimension batch_size (8 por defecto)
+    Encuentra el umbral óptimo para binarizar las predicciones.
+    El umbral óptimo es el que maximiza el F1-Score en datos de validación.
     
-    # Almacenar todas las predicciones y realidades
+    Args:
+        model: Modelo entrenado
+        val_csv: CSV con datos de validación
+        images_dir: Carpeta con imágenes
+        device: 'cuda' o 'cpu'
+        batch_size: Tamaño del lote
+        logger: Objeto para logging
+    
+    Returns:
+        mejor_umbral: Valor de umbral que maximiza F1 (ej: 0.45)
+    """
+    
+    # Crear dataset y dataloader
+    val_dataset = MRIDataset(val_csv, images_dir, logger=logger)
+    # shuffle=False porque el orden no importa para evaluación
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+    
+    model.eval()  # Modo evaluación
+    
+    # Almacenar todas las predicciones
     todas_predicciones = []
     todas_reales = []
     
-    with torch.no_grad():  # no queremos entrenar
+    with torch.no_grad():
         for imgs, masks in val_loader:
-            imgs = imgs.to(device) # lo manda a la memoria grafica donde esta el modelo la UNet
-            outputs = model(imgs) # la red actua
+            imgs = imgs.to(device)
+            logits = model(imgs)
+            probs = torch.sigmoid(logits)  # Logits → probabilidades (0-1)
             
-            # Aplanar para tener todos los píxeles
-            # Aplano la matriz y lo convierte en un vector muy largo con todos los pixeles
-            preds_flat = outputs.cpu().numpy().flatten()
+            # Aplanar: (batch, canales, H, W) → (batch*H*W,)
+            preds_flat = probs.cpu().numpy().flatten()
             masks_flat = masks.cpu().numpy().flatten()
             
-            todas_predicciones.extend(preds_flat)  # las añado a todas_predicciones hasta tener una LISTA larguisimo
+            todas_predicciones.extend(preds_flat)
             todas_reales.extend(masks_flat)
     
-    # Convertir a arrays (vectores de numpy)
-    y_true = np.array(todas_reales) # vector de unos y ceros. Lo tiene guardado como float
-    y_prob = np.array(todas_predicciones) # vector de probabilidades
+    # Convertir a arrays de NumPy
+    y_true = np.array(todas_reales)
+    y_prob = np.array(todas_predicciones)
+    total_pixeles = len(y_true)
     
     # Probar diferentes umbrales
-    umbrales = np.arange(0.1, 0.95, 0.05)  # vector de 0.1 a 0.95 de 0.05 en 0.05
+    umbrales = np.arange(0.1, 0.95, 0.05)  # De 0.1 a 0.9 en pasos de 0.05
     resultados = []
     
     for umbral in umbrales:
-        y_pred = (y_prob > umbral).astype(int) # vector de unos y ceros
-        y_true = y_true.astype(int)
-        sens = np.logical_and(y_pred , y_true).sum() / (y_true.sum() + 1e-8) #  da importancia a que HAYA TUMOR
+        y_pred = (y_prob > umbral).astype(int)  # Binarizar según umbral
+        y_true_bin = y_true.astype(int)
         
-        resultados.append({   # lista de listas (cada umbral con su sensibilidad)
+        # Calcular matriz de confusión
+        tp = np.logical_and(y_pred == 1, y_true_bin == 1).sum()
+        fp = np.logical_and(y_pred == 1, y_true_bin == 0).sum()
+        fn = np.logical_and(y_pred == 0, y_true_bin == 1).sum()
+        
+        # Métricas
+        sensibilidad = tp / (tp + fn + 1e-8)     # Recall
+        precision = tp / (tp + fp + 1e-8)        # Precisión
+        # Especificidad: TN/(TN+FP) - qué % de fondo clasificó correctamente
+        especificidad = (total_pixeles - tp - fp - fn) / (total_pixeles - tp - fn + 1e-8)
+        f1 = 2 * (precision * sensibilidad) / (precision + sensibilidad + 1e-8)
+        
+        resultados.append({
             'umbral': umbral,
-            'sensibilidad': sens
+            'sensibilidad': sensibilidad,
+            'precision': precision,
+            'especificidad': especificidad,
+            'f1': f1
         })
     
-    df_resultados = pd.DataFrame(resultados) # lo convertimos en dataframe
+    df_resultados = pd.DataFrame(resultados)
     
-    # Mejor umbral segun sensibilidad (maxima)
-    mejor_idx = df_resultados['sensibilidad'].idxmax()
+    # Encontrar umbral que maximiza F1-Score
+    mejor_idx = df_resultados['f1'].idxmax()
     mejor_umbral = df_resultados.loc[mejor_idx, 'umbral']
+    mejor_f1 = df_resultados.loc[mejor_idx, 'f1']
+    mejor_sens = df_resultados.loc[mejor_idx, 'sensibilidad']
+    mejor_prec = df_resultados.loc[mejor_idx, 'precision']
+    mejor_espec = df_resultados.loc[mejor_idx, 'especificidad']
     
     return mejor_umbral

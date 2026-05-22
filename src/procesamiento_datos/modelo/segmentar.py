@@ -1,7 +1,7 @@
 # PROCESAMIENTO_DATOS/MODELO/SEGMENTAR
 
 # Este script es el encargado de poner a trabajar a la IA ya entrenada. 
-# Su función es recibir imágenes nuevas, pasárselas al modelo (la U-Net) y 
+# Su función es recibir imágenes nuevas, pasárselas al modelo (FPN) y 
 # obtener como respuesta la 'máscara', que es el dibujo en blanco y negro 
 # que indica dónde está el tumor.
 
@@ -10,7 +10,7 @@ import torch              # Permite cargar el modelo (tensores) y usar la tarjet
 import numpy as np        # Para manejar las fotos como matrices y realizar cálculos matemáticos
 import pandas as pd       # Para organizar los resultados finales en tablas (DataFrames)
 from pathlib import Path   # Para las rutas de las carpetas y nombres de archivos
-from sklearn.metrics import f1_score, jaccard_score, precision_recall_curve # Herramientas para medir la bondad del modelo UNet
+from sklearn.metrics import f1_score, jaccard_score, precision_recall_curve # Herramientas para medir la bondad del modelo FPN
 
 
 # 1. Función para que la IA analice una sola imagen
@@ -29,7 +29,7 @@ def segmentar_imagen(model, imagen_npy_path, device='cpu', umbral=0.5):
     
     model.eval() # Ponemos el modelo en "modo evaluación" (no aprende)
     with torch.no_grad(): # Le decimos que no guarde memoria extra porque no estamos entrenando
-        # La UNet analiza la foto y nos da unos valores brutos (logits)
+        # La FPN analiza la foto y nos da unos valores brutos (logits)
         # squeeze quita los valores que valen 1: (1,1,256,256) a (256,256), una matriz plana
         logits = model(img_tensor).squeeze() 
         # Convertimos esos valores en probabilidades del 0 al 1 usando 'sigmoid'

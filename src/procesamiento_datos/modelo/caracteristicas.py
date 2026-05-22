@@ -17,7 +17,7 @@ from pathlib import Path    # Para gestionar las rutas de las imágenes y másca
 def extraer_caracteristicas(imagen, mascara_binaria):
    """
     Recibe:
-    imagen: array (H, W, 3) - canales: [FLAIR, pre, post]
+    imagen: array (H, W, 3)
     mascara_binaria: array (H, W) - 0 fondo, 1 tumor
 
     Devuelve un diccionario con 7 biomarcadores:
@@ -99,8 +99,8 @@ def extraer_caracteristicas(imagen, mascara_binaria):
 # Creamos una tabla final con las características o biomarcadores obtenidos
 def generar_dataset_features(df_segmentacion, directorio_imagenes, directorio_mascaras, df_previa=None):
     """
-    Función 'Integradora': Cruza las imágenes, las características calculadas y el historial clínico.
-    Crea una tabla final (CSV/Excel) lista para análisis médico.
+	Cruza las imágenes, las características calculadas y el historial clínico.
+    Crea una tabla final lista para análisis médico.
     """
     # Convertimos las rutas a objetos Path para que funcionen igual en Windows (\) o Linux/Mac (/).
     directorio_imagenes = Path(directorio_imagenes)

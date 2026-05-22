@@ -8,7 +8,7 @@
 # 3. Normalización: todas mismo idioma, así no importa el hospital de procedencia de la resonancia.
 # 4. Aumentamos datos para que la red no memorice patrones.
 # 5. Redimensionamos: 256x256, la red neuronal necesita un tamaño concreto.
- 
+
 # LIBRERÍAS NECESARIAS:
 import cv2   # para leer y manipular imágenes
 import numpy as np  # transforma las imágenes en matrices con las que podemos trabajar
@@ -17,12 +17,15 @@ import albumentations as A  # para data augmentation, crear más variantes de la
 # 1. Función para transformar las imágenes
 transformacion_aumento = A.Compose([
     A.HorizontalFlip(p=0.5), # Volteo horizontal, efecto espejo (50% de probabilidad)
-    A.RandomRotate90(p=0.5), # Rotación de 90 grados (50% de probabilidad)
-    A.ShiftScaleRotate(shift_limit=0.05, scale_limit=0.05, rotate_limit=15, p=0.3), # Desplaza, hace zoom o gira la imagen con probabilidad 0.3
+    A.RandomRotate90(p=0.5),	# Rotación de 90 grados (50% de probabilidad)
+	A.VerticalFlip(p=0.5),
+	A.Transpose(p=0.3),
+	A.RandomResizedCrop(size=(128,128),scale=(0.7,1.0), p=1.0),
+    A.ShiftScaleRotate(shift_limit=0.02, scale_limit=0.05, rotate_limit=15, p=0.3, border_mode = cv2.BORDER_CONSTANT), # Desplaza, hace zoom o gira la imagen con probabilidad 0.3
 ])
 
 # 2. Función para cargar y preparar cada imagen
-def procesar_imagen_completo(fila_maestro, entrenando=True):
+def procesar_imagen_completo(fila_maestro, entrenando=False):
     # Control de seguridad: nos aseguramos de que el registro del paciente existe
     if fila_maestro is None:
         raise ValueError("fila_maestro es None")
@@ -57,6 +60,19 @@ def procesar_imagen_completo(fila_maestro, entrenando=True):
         img = img[y_min:y_max+1, x_min:x_max+1] #Recortamos el cuadrado de la imagen (le sumamos 1 porque empieza por 0)
         mask = mask[y_min:y_max+1, x_min:x_max+1] #Igual en la máscara
 
+    # AUMENTO DE DATOS (DATA AUGMENTATION)
+    if entrenando:
+        # Convertimos la máscara a binaria (0 o 1) antes de transformar
+        mask = (mask > 0).astype(np.float32)
+        # Aplicamos las transformaciones aleatorias a ambos archivos a la vez
+        resultado = transformacion_aumento(image=img, mask=mask)
+        img, mask = resultado['image'], resultado['mask']
+
+    # REDIMENSIONADO FINAL
+    # Como el recorte cambia el tamaño, redimensionamos a un estándar (ej. 256x256) para el modelo
+    img = cv2.resize(img, (128, 128)) 
+    mask = cv2.resize(mask, (128, 128), interpolation=cv2.INTER_NEAREST) #INTER_NEAREST para que la mascara se difumine
+
     # NORMALIZACIÓN Z-SCORE POR CANAL 
     for i in range(3): # Iteramos por los 3 canales (0, 1 y 2)
         canal = img[:, :, i]
@@ -69,18 +85,5 @@ def procesar_imagen_completo(fila_maestro, entrenando=True):
             img[:, :, i] = (canal - media) / (std + 1e-8)
             # Nos aseguramos que el fondo recortado siga siendo 0 absoluto
             img[canal == 0, i] = 0
-
-    # AUMENTO DE DATOS (DATA AUGMENTATION)
-    if entrenando:
-        # Convertimos la máscara a binaria (0 o 1) antes de transformar
-        mask = (mask > 0).astype(np.float32)
-        # Aplicamos las transformaciones aleatorias a ambos archivos a la vez
-        resultado = transformacion_aumento(image=img, mask=mask)
-        img, mask = resultado['image'], resultado['mask']
-
-    # REDIMENSIONADO FINAL
-    # Como el recorte cambia el tamaño, redimensionamos a un estándar (ej. 256x256) para el modelo
-    img = cv2.resize(img, (256, 256)) 
-    mask = cv2.resize(mask, (256, 256), interpolation=cv2.INTER_NEAREST) #INTER_NEAREST para que la mascara se difumine
 
     return img, mask
