@@ -54,7 +54,7 @@ La aplicación incluye un formulario médico donde se pueden ingresar datos clí
 
 1. Clonar el repositorio:
 
-git clone https://github.com/alejandrooam/brain-tumor-segmentation-unet-app.git
+git clone https://github.com/evadomcal/brain-tumor-segmentation-FPN-app.git
 cd brain-tumor-segmentation-unet-app
 
 2. Instalar uv:
@@ -86,27 +86,27 @@ Enlace del dataset: [https://www.kaggle.com/datasets/mateuszbuda/lgg-mri-segment
 
 brain-tumor-segmentation-unet-app/  
 src/  
- &ensp; datos.py   &emsp;   # Importación de datos desde Kaggle  
- &ensp; mapeo_archivos.py  &emsp;    # Generación del catálogo de trabajo  
- &ensp; transformar_datos.py   &emsp;   # Adaptación y preprocesamiento de imágenes  
+ &ensp; datos.py   &emsp;                      # Importación de datos desde Kaggle  
+ &ensp; mapeo_archivos.py  &emsp;              # Generación del catálogo de trabajo  
+ &ensp; transformar_datos.py   &emsp;          # Adaptación y preprocesamiento de imágenes  
  &ensp; Analisis/  
  &ensp;&ensp;   Analisis_imagen.py    &emsp;   # Mini-modelo para predicción de urgencia  
- &ensp;&ensp;   Analisis_test.py    &emsp;   # Análisis del conjunto de test  
+ &ensp;&ensp;   Analisis_test.py    &emsp;     # Análisis del conjunto de test  
  &ensp;&ensp;   Metricas_modelo.py    &emsp;   # Métricas de calidad de segmentación  
- &ensp;&ensp;   Script_R_1.R    &emsp;   # Análisis estadístico en R  
+ &ensp;&ensp;   Script_R_1.R    &emsp;         # Análisis estadístico en R  
  &ensp; Aplicacion/  
- &ensp;&ensp;   streamlit.py    &emsp;   # Página principal de la app  
- &ensp;&ensp;   cliente.py   &emsp;   # Comunicación con Dagster  
+ &ensp;&ensp;   streamlit.py    &emsp;         # Página principal de la app  
+ &ensp;&ensp;   cliente.py   &emsp;            # Comunicación con Dagster  
  &ensp;&ensp;   pages/  
- &ensp;&ensp;&ensp;     Ficha_tecnica.py   &emsp;   # Ficha técnica del modelo  
+ &ensp;&ensp;&ensp;     Ficha_tecnica.py   &emsp;     # Ficha técnica del modelo  
  &ensp; orquestador/  
- &ensp;&ensp;   activos.py   &emsp;   # Activos de Dagster para el flujo de trabajo  
+ &ensp;&ensp;   activos.py   &emsp;                   # Activos de Dagster para el flujo de trabajo  
  &ensp; procesamiento_datos/  
- &ensp;&ensp;   procesador_dask.py  &emsp;    # Transformación paralela con Dask  
+ &ensp;&ensp;   procesador_dask.py  &emsp;            # Transformación paralela con Dask  
  &ensp;&ensp;   modelo/  
- &ensp;&ensp;&ensp;     modelo_unet.py    &emsp;  # Arquitectura UNet  
+ &ensp;&ensp;&ensp;     modelo_fpn.py    &emsp;       # Arquitectura FPN  
  &ensp;&ensp;&ensp;     entrenar_modelo.py    &emsp;  # Entrenamiento del modelo  
- &ensp;&ensp;&ensp;     segmentar.py   &emsp;   # Lógica de segmentación  
+ &ensp;&ensp;&ensp;     segmentar.py   &emsp;         # Lógica de segmentación  
  &ensp;&ensp;&ensp;     caracteristicas.py  &emsp;    # Extracción de características tumorales  
 .gitignore  
 pyproject.toml  
@@ -121,7 +121,7 @@ Para entrenar el modelo, se utiliza Dagster como orquestador. Debes ejecutar los
 1. Catalogo_maestro
 2. imagenes_procesadas
 3. dividir_dataset_balanceado
-4. modelo_unet_entrenado
+4. modelo_fpn_entrenado
 5. mejor_umbral
 6. segmentaciones_test
 7. caracteristicas_tumorales
